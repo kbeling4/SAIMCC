@@ -14,7 +14,7 @@ def SCPT( particle, material, bins, tally, nps, initial ):
         while j != 1:
             if state[0] >= initial[2] or state[1] <= initial[3]:
                 # num_collisions[i] = k
-                tal.e_tallier( tally, bins, state )
+                tal.e_tallier( tally, bins, state, initial )
                 break
             else:
                 # Position Mover
