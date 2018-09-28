@@ -1,12 +1,13 @@
 #include <boost/random.hpp>
 #include <iostream>
+#include <fstream>
 #include <cstdint>
 #include <random>
 #include <vector>
 #include <string>
 #include <math.h>
 
-int nps = 1e2;
+int nps = 1e5;
 std::mt19937_64 rng;
 std::uniform_real_distribution<double> distribution(0.0,1.0);
 
@@ -15,7 +16,10 @@ struct state{
   double pos =    0;
   double ene = 1700;
   double Z = 1.0;
-  double mass = 938.2723;
+  double mass = 938.27231;
+  double gamma2;
+  double beta2;
+  double Qmax;
 };
 
 struct material{
@@ -26,41 +30,66 @@ struct material{
   double Qmin = 6e-04;
 };
 
-auto Qmax = [] ( const auto& particle ) {
-	      auto gamma = ( particle.ene + particle.mass ) / particle.mass;
-	      auto beta  = 1 - ( 1 / gamma );
-	      auto qmax = 1.022 * beta * gamma;
-	      std::vector<double> quant = { gamma, beta, qmax };
-	      return quant;
-	    };
+auto Qmax = [] ( auto& particle ) {
+	      particle.gamma2 = pow( ( particle.ene + particle.mass ) / particle.mass, 2 );
+	      particle.beta2  = 1 - ( 1 / particle.gamma2  );
+	      particle.Qmax = 1.022 * particle.beta2 * particle.gamma2;
+	      return particle; };
 
-auto XS = [&] ( const auto& particle, const auto& material ) {
+auto XS = [&] ( auto& particle, const auto& material ) {
 	    auto amp = 0.1536 * pow(particle.Z, 2) * material.Z * material.rho / material.M;
-	    auto quant = Qmax( particle );
-	    auto xs = amp * ( 1 / quant[1] ) * ( ( 1 / material.Qmin - 1 / quant[2] )
-					      - ( quant[1] / quant[2] )
-					      * log( quant[2] / material.Qmin ) );
-	    return xs;
-	  };
+	    Qmax( particle );
+	    auto xs = amp * ( 1 / particle.beta2 ) * ( ( 1 / material.Qmin - 1 / particle.Qmax )
+					      - ( particle.beta2 / particle.Qmax )
+					      * log( particle.Qmax / material.Qmin ) );
+	    return xs; };
 
 auto pusher = [&] ( auto& particle, const auto& material, const auto& r){
 		auto xs = XS( particle, material );
 		auto delta =  ( 1 / xs ) * log( 1 / r );
 		particle.pos += delta;
-		return particle;
-	      };
+		return particle; };
 
-auto decrementer = [&] (auto& particle, const auto& material, const auto& r){
-		     auto quant = Qmax( particle );
-		     auto delta = pow( ( ( ( 1 - r )/material.Qmin ) + ( r / quant[2] ) ), -1 );
+auto decrementer = [&] ( auto& particle, const auto& material, const auto& r){
+		     Qmax( particle );
+		     auto delta = pow( ( ( ( 1 - r )/material.Qmin )+( r/particle.Qmax ) ),-1 );
 		     particle.ene -= delta;
-		     return particle;
-		   };
+		     return particle; };
+
+auto dFDQ = [&] ( auto& particle, const auto& material, auto& Q ) {
+	      Qmax( particle );
+	      auto xs = ( 1/material.Qmin - 1/particle.Qmax ) - (particle.beta2/particle.Qmax)
+		* log(particle.Qmax/material.Qmin);
+	      return ( 1/(Q*Q) - (particle.beta2/particle.Qmax)*(1/Q) ) / xs; };
+
+auto FQ = [&] ( auto& particle, const auto& material, auto& Q, const auto& rand ) {
+	    Qmax( particle );
+	    auto xs = ( 1/material.Qmin - 1/particle.Qmax ) - (particle.beta2/particle.Qmax)
+	      * log(particle.Qmax/material.Qmin);
+	    return (( 1/material.Qmin - 1/Q ) - (particle.beta2/particle.Qmax)
+		    * log( Q / material.Qmin ) ) / xs - rand; };
+
+auto Newton = [&] ( auto& particle, const auto& material, const auto& rand ) {
+		auto eps = 1e-3;
+		auto   Q = 1e-3;
+		auto fValue = FQ( particle, material, Q, rand );
+		auto itCount = 0;
+		while( abs( fValue ) > eps ) {
+		  Q -= fValue / dFDQ( particle, material, Q );
+		  fValue = FQ( particle, material, Q, rand );
+		  ++ itCount; 
+		}
+		//std::cout << Q << std::endl;
+		return Q; };
+
+auto DecE = [&] ( auto& particle, const auto& material, const auto& r ) {
+	      auto delta = Newton( particle, material, r );
+	      return particle.ene -= delta; };
+		
 
 auto add_hist = [] ( const auto& particle, auto& history ){
 		  history.push_back( particle );
-		  return history;
-		};
+		  return history; };
 
 int main()
 {
@@ -79,14 +108,14 @@ int main()
     
     bool t = true;
     while(t){
-      if( particle.pos <= 0.5 && particle.ene >= 200 ){
+      if( particle.pos <= 0.5 && particle.ene >= 1e-2 ){
 	// Position Mover
 	double r1 = distribution( rng );
 	pusher( particle, mat, r1 );
 	
 	// Energy Decrementer
 	double r2 = distribution( rng );
-	decrementer( particle, mat, r2 );
+	DecE( particle, mat, r2 );
       }
       else {
 	t = false;
@@ -95,7 +124,13 @@ int main()
     }
   }
 
-  for( auto t : history ){
-    std::cout << t.ene << '\n';
+  std::ofstream myfile ("output.txt");
+  if (myfile.is_open())
+  {
+    for( auto t : history ){
+      myfile << t.ene << "\n";
+    }
   }
+  myfile.close();
+  return 0;
 }
