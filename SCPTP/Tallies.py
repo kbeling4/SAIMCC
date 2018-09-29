@@ -17,11 +17,16 @@ def p_tallier( tally, bins, state ):
             break
     return tally, state
 
-def normalizer( tally, bins, initial ):
+def normalizer( tally, bins, initial, nps ):
     for i in range( 0, len(tally) ):
         b = (bins[i + 1] + bins[i]) / 2
-        tally[i] = tally[i] * ( initial[1] - b )
+        tally[i] = tally[i] / ( nps )
     return tally
+
+def printer( state ):
+    with open( 'tally.o', 'a' ) as f:
+        f.writelines( str(state[1]) + "\n" )
+        f.close()
 
 def plotter( tally, bins, typ ):
     x = []
@@ -37,7 +42,7 @@ def plotter( tally, bins, typ ):
         plt.xlabel('Emerging Energy (MeV)')
         plt.ylabel('Fraction in Energy bin')
     if typ == 'scatter':
-        plt.plot( x, y, 'o')
+        plt.semilogy( x, y, 'b')
         plt.xlim( bins[0], bins[-1] )
     plt.show()
 
