@@ -10,7 +10,7 @@ def SCPT( particle, material, bins, tally, nps, initial ):
             print "nps = %s" % i
         j = 0
         state = [ initial[0], initial[1], 0 ]
-    
+
         while j != 1:
             if state[0] >= initial[2] or state[1] <= initial[3]:
                 # num_collisions[i] = k
@@ -24,4 +24,4 @@ def SCPT( particle, material, bins, tally, nps, initial ):
 
                 # Energy Decrementer
                 r2  = random.random()
-                XS.Dec_E( state, r2, particle, material )
+                XS.Decrementer( state, r2, particle, material )
