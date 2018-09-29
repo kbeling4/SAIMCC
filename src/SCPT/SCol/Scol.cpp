@@ -1,18 +1,18 @@
-#include <boost/random.hpp>
 #include <iostream>
 #include <fstream>
 #include <cstdint>
 #include <random>
 #include <vector>
 #include <string>
+#include <chrono>
 #include <math.h>
 
-int nps = 1e5;
+int nps = 1e4;
 std::mt19937_64 rng;
 std::uniform_real_distribution<double> distribution(0.0,1.0);
 
 struct state{
-  std::string par = "proton";
+  std::string name = "proton";
   double pos =    0;
   double ene = 1700;
   double Z = 1.0;
@@ -23,7 +23,7 @@ struct state{
 };
 
 struct material{
-  std::string par = "Tungsten";
+  std::string name = "Tungsten";
   double Z = 74.0;
   double M = 183.84;
   double rho = 19.3;
@@ -36,15 +36,15 @@ auto Qmax = [] ( auto& particle ) {
 	      particle.Qmax = 1.022 * particle.beta2 * particle.gamma2;
 	      return particle; };
 
-auto XS = [&] ( auto& particle, const auto& material ) {
+auto XS = [&] ( const auto& particle, const auto& material ) {
 	    auto amp = 0.1536 * pow(particle.Z, 2) * material.Z * material.rho / material.M;
-	    Qmax( particle );
 	    auto xs = amp * ( 1 / particle.beta2 ) * ( ( 1 / material.Qmin - 1 / particle.Qmax )
 					      - ( particle.beta2 / particle.Qmax )
 					      * log( particle.Qmax / material.Qmin ) );
 	    return xs; };
 
 auto pusher = [&] ( auto& particle, const auto& material, const auto& r){
+		Qmax( particle );
 		auto xs = XS( particle, material );
 		auto delta =  ( 1 / xs ) * log( 1 / r );
 		particle.pos += delta;
@@ -56,20 +56,18 @@ auto decrementer = [&] ( auto& particle, const auto& material, const auto& r){
 		     particle.ene -= delta;
 		     return particle; };
 
-auto dFDQ = [&] ( auto& particle, const auto& material, auto& Q ) {
-	      Qmax( particle );
+auto dFDQ = [&] (const  auto& particle, const auto& material, auto& Q ) {
 	      auto xs = ( 1/material.Qmin - 1/particle.Qmax ) - (particle.beta2/particle.Qmax)
 		* log(particle.Qmax/material.Qmin);
 	      return ( 1/(Q*Q) - (particle.beta2/particle.Qmax)*(1/Q) ) / xs; };
 
-auto FQ = [&] ( auto& particle, const auto& material, auto& Q, const auto& rand ) {
-	    Qmax( particle );
+auto FQ = [&] ( const auto& particle, const auto& material, auto& Q, const auto& rand ) {
 	    auto xs = ( 1/material.Qmin - 1/particle.Qmax ) - (particle.beta2/particle.Qmax)
 	      * log(particle.Qmax/material.Qmin);
 	    return (( 1/material.Qmin - 1/Q ) - (particle.beta2/particle.Qmax)
 		    * log( Q / material.Qmin ) ) / xs - rand; };
 
-auto Newton = [&] ( auto& particle, const auto& material, const auto& rand ) {
+auto Newton = [&] (const auto& particle, const auto& material, const auto& rand ) {
 		auto eps = 1e-3;
 		auto   Q = 1e-3;
 		auto fValue = FQ( particle, material, Q, rand );
@@ -79,10 +77,11 @@ auto Newton = [&] ( auto& particle, const auto& material, const auto& rand ) {
 		  fValue = FQ( particle, material, Q, rand );
 		  ++ itCount; 
 		}
-		//std::cout << Q << std::endl;
+		//std::cout << Q << " ";
 		return Q; };
 
 auto DecE = [&] ( auto& particle, const auto& material, const auto& r ) {
+	      Qmax( particle );
 	      auto delta = Newton( particle, material, r );
 	      return particle.ene -= delta; };
 		
@@ -93,6 +92,7 @@ auto add_hist = [] ( const auto& particle, auto& history ){
 
 int main()
 {
+  auto start = std::chrono::system_clock::now();
   rng.seed(123456789);
   state p1;
   std::vector<decltype(p1)> history;
@@ -106,8 +106,7 @@ int main()
       std::cout << "nps = " << i << std::endl;
     }
     
-    bool t = true;
-    while(t){
+    while(true){
       if( particle.pos <= 0.5 && particle.ene >= 1e-2 ){
 	// Position Mover
 	double r1 = distribution( rng );
@@ -118,8 +117,8 @@ int main()
 	DecE( particle, mat, r2 );
       }
       else {
-	t = false;
 	add_hist( particle, history );
+	break;
       }
     }
   }
@@ -132,5 +131,9 @@ int main()
     }
   }
   myfile.close();
+  auto end = std::chrono::system_clock::now();
+  std::chrono::duration<double> elapsed_seconds = end-start;
+  std::cout << "---------------------------------" << std::endl;
+  std::cout << "Total time: " << elapsed_seconds.count() << std::endl;
   return 0;
 }

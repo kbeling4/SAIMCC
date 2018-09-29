@@ -11,7 +11,7 @@ import Tallies as tal
 def Main():
     t0 = time.time()
     # num_threads = 2
-    nps = 1e2
+    nps = 1e4
     random.seed( 123456 )
     
     # --------- problem properties ----------------
