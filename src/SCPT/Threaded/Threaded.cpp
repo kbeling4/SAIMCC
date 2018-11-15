@@ -5,7 +5,6 @@
 #include <vector>
 #include <string>
 #include <math.h>
-#include <chrono>
 
 #include <omp.h>
 
@@ -13,14 +12,14 @@
 
 #define NUM_THREADS 4
 
-int nps = 5e3;
+int nps = 1e3;
 std::mt19937_64 rng;
 std::uniform_real_distribution<double> distribution(0.0,1.0);
 
 struct material{
-  std::string name = "Tungsten";
+  std::string name = "Graphite";
   double Z = 6.0;
-  double M = 12.0107;
+  double M = 12.011;
   double rho = 2.266;
   double Qmin = 7.80e-05;
 };
@@ -46,19 +45,13 @@ int main()
 							 * log( particle.Qmax/material.Qmin ) );
 	      return xs; };
   
-  auto pusher = [&] ( auto& particle, const auto& material, const auto& r){
+  auto pusher = [&] ( auto& particle, const auto& material, auto& gen){
 		  particle.get_qmax();
 		  auto xs = XS( particle, material );
-		  auto delta =  ( 1 / xs ) * log( 1 / r );
+		  auto delta =  ( 1 / xs ) * log( 1 / distribution( gen ) );
 		  particle.position += delta;
 		  return particle; };
   
-  auto decrementer = [&] ( auto& particle, const auto& material, const auto& r){
-		       particle.get_qmax();
-		       auto delta = pow( ( ( ( 1-r )/material.Qmin )+( r/particle.Qmax ) ),-1 );
-		       particle.ene -= delta;
-		       return particle; };
-
   auto dFDQ = [&] (const auto& particle, const auto& material, auto& Q ) {
 		auto xs = ( 1/material.Qmin - 1/particle.Qmax ) - (particle.beta2/particle.Qmax)
 		  * log(particle.Qmax/material.Qmin);
@@ -80,19 +73,14 @@ int main()
 		    fValue = FQ( particle, material, Q, rand );
 		    ++ itCount; 
 		  }
-		  //std::cout << Q << " ";
 		  return Q; };
   
-  auto DecE = [&] ( auto& particle, const auto& material, const auto& r ) {
+  auto DecE = [&] ( auto& particle, const auto& material, auto& gen ) {
 		particle.get_qmax();
-		auto delta = Newton( particle, material, r );
-		return particle.energy -= delta; };
+		auto delta = Newton( particle, material, distribution( gen ) );
+	        particle.energy -= delta;
+		return particle; };
   
-  
-  auto add_hist = [] ( const auto& particle, auto& history ){
-		    history.push_back( particle );
-		    return history; };
-
   auto eTallier = [] ( const auto& bins, auto& state, const auto& p_energy, auto& tally ){
 		    for( auto i = state.tal; i < tally.size(); ++i ){
 		      if( state.position < bins[i] ) {
@@ -110,13 +98,21 @@ int main()
 			  tally[i] += 1;
 			  break;
 			}
-			++state.tal;
+		      }
+		      return tally;
+		    };
+
+  auto exitTallier = [] ( const auto& bins, auto& state, auto& tally ){
+		      for( auto i = 0; i < tally.size(); ++i ){
+			if( state.energy < bins[i] ) {
+			  tally[i] += 1;
+			  break;
+			}
 		      }
 		      return tally;
 		    };
 
   auto normalizer = [] ( const auto& nps, auto& tally, const auto& bins ){
-		      state p;
 		      for( auto i = 0; i < tally.size(); ++i ){
 			tally[i] = tally[i] / (nps);
 		      }
@@ -135,66 +131,58 @@ int main()
 		   myfile.close();
 		 };
 
+  auto physics = [&] ( auto& particle, const auto& mat ) {
+		   do{ 
+		     //auto p_energy = particle.energy;
+		     // Position Mover
+		     pusher( particle, mat, rng );
+		     
+		     // Energy Decrementer
+		     DecE( particle, mat, rng );
+	
+		     // Energy Tally
+		     //#pragma critical	  
+		     // eTallier( bins, particle, p_energy, tally );
+		   } while( particle.position <= 28.0 && particle.energy >= 1e-3 ); 
+		 };
+		   
   
   // Run problem -------------------------------------------------------------------
-  auto start = std::chrono::system_clock::now();
+  double start_time, run_time;
+  start_time = omp_get_wtime();
 
-  state p1;
-  std::vector<decltype(p1)> history;
   rng.seed(123456789);
 
-  auto bins = linspace( 25.0, 35.0, 1000 );
+  auto bins = linspace( 0.0, 75.0, 200 );
   std::vector<double> tally( bins.size() - 1, 0.0 );
   
   // Loop -------------------------------------------------------------------------
 #pragma omp parallel
   {
-    int id = omp_get_thread_num();
-    int numthreads = omp_get_num_threads();
+    //    int id = omp_get_thread_num();
+    //    int numthreads = omp_get_num_threads();
+    auto num = nps / 10;
 
-    for( int i = id; i < nps; i+=numthreads ){
+#pragma omp for schedule( dynamic, 100 )
+    for( int i = 0; i < nps; ++i ){
       state particle;
       material mat;
+      physics( particle, mat );
 
-      auto p = nps / 10;
-      if( i % p == 0 ){
+      if( i % num == 0 ){
 	std::cout << "nps = " << i << std::endl;
       }
-      
-      while(true){
-	auto p_energy = particle.energy;
-	//add_hist( particle, history );
-	if( particle.position <= 30.0 && particle.energy >= 3e-1 ){
-	  // Position Mover
-	  double r1 = distribution( rng );
-	  pusher( particle, mat, r1 );
-	
-	  // Energy Decrementer
-	  double r2 = distribution( rng );
-	  DecE( particle, mat, r2 );
-
-	  // Energy Tally
-#pragma critical	  
-	  //	  eTallier( bins, particle, p_energy, tally );
-
-	}
-	else {
-	  
-#pragma critical	  
-	  endTallier( bins, particle, tally );
-	  break;
-	}
-      }
+#pragma omp critical
+      exitTallier( bins, particle, tally );
     }
   }
   // -------------------------------------------------------------------------------
 
-  //  normalizer( nps, tally, bins );
+  //normalizer( nps, tally, bins );
   printer( tally, bins );
-
-  auto end = std::chrono::system_clock::now();
-  std::chrono::duration<double> elapsed_seconds = end-start;
+  std::cout << "nps = " << nps << std::endl;
+  run_time = omp_get_wtime() - start_time;
   std::cout << "---------------------------------" << std::endl;
-  std::cout << "Total time: " << elapsed_seconds.count() << std::endl;
+  std::cout << "Total time: " << run_time << std::endl;
   return 0;
 }

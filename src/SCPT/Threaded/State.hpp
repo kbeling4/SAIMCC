@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string>
 
 class state{
 
@@ -6,7 +7,7 @@ class state{
   double gamma2;
 
 public:
-  //std::string name = "proton";
+  std::string name = "Proton";
   double position =    0;
   double energy = 200;
   double Z = 1.0;
