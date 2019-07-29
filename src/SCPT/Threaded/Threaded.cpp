@@ -18,10 +18,10 @@ std::uniform_real_distribution<double> distribution(0.0,1.0);
 
 struct material{
   std::string name = "Graphite";
-  double Z = 6.0;
-  double M = 12.011;
-  double rho = 2.266;
-  double Qmin = 7.80e-05;
+  double Z = 74.0;
+  double M = 183.84;
+  double rho = 19.3;
+  double Qmin = 7.27e-04;
 };
 
 
@@ -36,8 +36,26 @@ std::vector<T> linspace(T a, T b, size_t N) {
   return xs;
 } 
 
+
 int main()
 {
+  auto inverr = [] ( auto x ) {
+		  float tt1, tt2, lnx, sgn;
+		  sgn = (x < 0) ? -1.0f : 1.0f;
+		  x = (1 - x)*(1 + x);
+		  lnx = logf(x);
+
+		  tt1 = 2/(M_PI*0.147) + 0.5f * lnx;
+		  tt2 = 1/(0.147) * lnx;
+		 
+		  return(sgn*sqrtf(-tt1 + sqrtf(tt1*tt1 - tt2))); };
+
+  auto gaussian = [&] ( const auto mu, const auto var, auto& gen ){
+		    auto erinv = inverr( 2*distribution( gen ) - 1 );
+		    return mu + sqrt(2)*sqrt(var)*erinv;
+		  };
+
+  
   auto XS = [&] ( const auto& particle, const auto& material ) {
 	      auto amp = 0.1536 * pow(particle.Z, 2) * material.Z * material.rho / material.M;
 	      auto xs = amp * ( 1 / particle.beta2 ) * ( ( 1/material.Qmin - 1/particle.Qmax )
@@ -64,15 +82,16 @@ int main()
 		      * log( Q / material.Qmin ) ) / xs - rand; };
   
   auto Newton = [&] (const auto& particle, const auto& material, const auto& rand ) {
-		  auto eps = 1e-3;
+		  auto err = 1e-3;
 		  auto   Q = 1e-4;
 		  auto fValue = FQ( particle, material, Q, rand );
 		  auto itCount = 0;
-		  while( abs( fValue ) > eps ) {
+		  while( abs( fValue ) > err ) {
 		    Q -= fValue / dFDQ( particle, material, Q );
 		    fValue = FQ( particle, material, Q, rand );
 		    ++ itCount; 
 		  }
+		  //		  std::cout << itCount << "\n";
 		  return Q; };
   
   auto DecE = [&] ( auto& particle, const auto& material, auto& gen ) {
@@ -143,34 +162,33 @@ int main()
 		     // Energy Tally
 		     //#pragma critical	  
 		     // eTallier( bins, particle, p_energy, tally );
-		   } while( particle.position <= 28.0 && particle.energy >= 1e-3 ); 
+		   } while( particle.position <= 1.0 && particle.energy >= mat.Qmin ); 
 		 };
 		   
-  
   // Run problem -------------------------------------------------------------------
   double start_time, run_time;
   start_time = omp_get_wtime();
 
   rng.seed(123456789);
 
-  auto bins = linspace( 0.0, 75.0, 200 );
+  auto bins = linspace( 300.0, 700.0, 50 );
   std::vector<double> tally( bins.size() - 1, 0.0 );
   
   // Loop -------------------------------------------------------------------------
 #pragma omp parallel
   {
-    //    int id = omp_get_thread_num();
-    //    int numthreads = omp_get_num_threads();
     auto num = nps / 10;
 
 #pragma omp for schedule( dynamic, 100 )
     for( int i = 0; i < nps; ++i ){
       state particle;
+      particle.energy = gaussian( 800, 500, rng );
+      //std::cout << particle.energy << std::endl;
       material mat;
       physics( particle, mat );
 
       if( i % num == 0 ){
-	std::cout << "nps = " << i << std::endl;
+      	std::cout << "nps = " << i << std::endl;
       }
 #pragma omp critical
       exitTallier( bins, particle, tally );
@@ -178,7 +196,7 @@ int main()
   }
   // -------------------------------------------------------------------------------
 
-  //normalizer( nps, tally, bins );
+  normalizer( nps, tally, bins );
   printer( tally, bins );
   std::cout << "nps = " << nps << std::endl;
   run_time = omp_get_wtime() - start_time;
